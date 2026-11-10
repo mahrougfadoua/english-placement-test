@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, FormEvent, InputHTMLAttributes } from "react";
 import { questions } from "@/data/questions";
 import { getLevel, LEVELS } from "@/lib/levels";
@@ -64,33 +64,38 @@ export default function Home() {
   };
 
   
-const finish = async () => {
-  try {
-    const response = await fetch("/api/submit", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ user, answers }),
-    });
+  const submittedRef = useRef(false);
 
-    const result = await response.json();
-
-    if (!response.ok || !result.ok) {
-      throw new Error(result.error || "Submission failed");
+  // Save in the background (with retries) so the student never waits.
+  const saveResult = async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await fetch("/api/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user, answers }),
+          keepalive: true,
+        });
+        const result = await response.json();
+        if (response.ok && result.ok) return;
+      } catch (err) {
+        console.error("Submit attempt failed:", err);
+      }
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
     }
+    console.error("Result could not be saved after 3 attempts", { user, answers });
+  };
 
+  const finish = () => {
+    if (submittedRef.current) return; // ignore double clicks
+    submittedRef.current = true;
     setStage("result");
     window.scrollTo({ top: 0, behavior: "smooth" });
-
-  } catch (err) {
-    console.error("Submit failed:", err);
-    alert("Your result could not be saved. Please try again.");
-  }
-};
-
+    void saveResult();
+  };
 
   const restart = () => {
+    submittedRef.current = false;
     setAnswers(Array(questions.length).fill(null));
     setCurrent(0);
     setUser(EMPTY_USER);
